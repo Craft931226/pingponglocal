@@ -3,11 +3,29 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score
 import lightgbm as lgb
+
 logging.basicConfig(
     filename="log.txt",
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
+from sklearn.linear_model import LogisticRegression
+
+def stacking_predict(models_dict, X_val, meta_list):
+    """取所有基模型機率當特徵，訓練簡單 LR 做二階融合"""
+    # 第一層預測
+    layer1 = []
+    for name, bundle in models_dict.items():
+        proba = bundle["model"].predict_proba(X_val)
+        layer1.append(proba)
+    X_stack = np.hstack(layer1)
+    # 用真實 y 建 LR
+    true_y = np.column_stack([meta_list[t] for t in models_dict.keys()])
+    # 這裡示範單目標，實際可延伸
+    lr = LogisticRegression(max_iter=500)
+    lr.fit(X_stack, true_y.ravel())
+    return lr, X_stack
+
 def train_validate_split(X, y, groups, test_size=0.2, random_state=42):
     from sklearn.model_selection import GroupShuffleSplit
 
@@ -20,9 +38,9 @@ def train_validate_split(X, y, groups, test_size=0.2, random_state=42):
     # Check unique values in groups
     unique_groups, group_counts = np.unique(groups, return_counts=True)
     # print(f"Number of unique groups: {len(unique_groups)}")
-    logging.info(f"Number of unique groups: {len(unique_groups)}")
+    # logging.info(f"Number of unique groups: {len(unique_groups)}")
     # print(f"Group counts: {dict(zip(unique_groups, group_counts))}")
-    logging.info(f"Group counts: {dict(zip(unique_groups, group_counts))}")
+    # logging.info(f"Group counts: {dict(zip(unique_groups, group_counts))}")
 
 
     splitter = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state)
@@ -126,9 +144,11 @@ def evaluate_validation_set(data_dict, models_dict, target_info):
             
         scores[target_name] = score
         print(f"{target_name} ROC AUC: {score:.4f}")
+        logging.info(f"{target_name} ROC AUC: {score:.4f}")
     
     avg_score = np.mean(list(scores.values()))
     print(f"\nAverage ROC AUC: {avg_score:.4f}")
+    logging.info(f"Average ROC AUC: {avg_score:.4f}")
     return scores, avg_score
 
 def check_unique_id_overlap(train_file, val_file):

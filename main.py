@@ -2,7 +2,7 @@ import argparse, pandas as pd, numpy as np, lightgbm as lgb
 from pathlib import Path
 from feature_utils import generate_features, aggregate_group_prob
 from model_utils import TARGETS, build_scaler, build_model
-from model_utils import cv_evaluate, save_model, load_model
+from model_utils import cv_evaluate, save_model, load_model, tune_lgb_params
 from train_val_utils import train_validate_split, evaluate_model, evaluate_validation_set
 import warnings
 import logging
@@ -34,7 +34,7 @@ def load_features(feat_dir):
 
 def prepare_train():
     # 1. 產生特徵
-    generate_features("./train_data", "train_info.csv", "tabular_data_train")
+    # generate_features("./train_data", "train_info.csv", "tabular_data_train")
 
     # 2. 讀取 info & 特徵
     info = pd.read_csv("train_info.csv")
@@ -52,10 +52,20 @@ def prepare_train():
     # 4. 對每個 target 建模
     for col, meta in TARGETS.items():
         print(f"\nTraining for {col}:")
+        logging.info(f"\nTraining for {col}:")
         y = info.set_index("unique_id").loc[uid_idx, col].values
         
         # 拆分訓練集和驗證集
         data_dict = train_validate_split(X_scaled, y, groups)
+            # 👉 使用 Optuna 找最佳超參數
+        best_params = tune_lgb_params(
+            data_dict["X_train"], data_dict["y_train"], data_dict["groups_train"], meta, n_trials=20
+        )
+        print(f"Best params for {col}: {best_params}")
+        logging.info(f"Best params for {col}: {best_params}")
+        # 👉 用最佳參數建模型
+        mdl = build_model(y, meta, params_override=best_params)
+
         if holdout_data is None:
             holdout_data = {
                 'X_val': data_dict['X_val'],
@@ -69,9 +79,10 @@ def prepare_train():
         holdout_data['y_train'][col] = data_dict['y_train']
         
         # 訓練和驗證
-        mdl = build_model(y, meta)
+        # mdl = build_model(y, meta)
         val_score, trained_model = evaluate_model(mdl, data_dict, meta)
         print(f"Training Score for {col}: {val_score:.4f}")
+        logging.info(f"Training Score for {col}: {val_score:.4f}")
         save_model(trained_model, scaler, col)
         all_targets[col] = {'model': trained_model, 'scaler': scaler}
         
